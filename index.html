@@ -1,13 +1,401 @@
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>dyad-generated-app</title>
-  </head>
+<script type="text/javascript">
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+          return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+            try {
+                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                var firstSheetName = workbook.SheetNames[0];
+                var worksheet = workbook.Sheets[firstSheetName];
 
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
-  </body>
+                // Convert sheet to JSON to filter blank rows
+                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                // Filter out blank rows (rows where all cells are empty, null, or undefined)
+                var filteredData = jsonData.filter(row => row.some(filledCell));
+
+                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+                var headerRowIndex = filteredData.findIndex((row, index) =>
+                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                );
+                // Fallback
+                if (headerRowIndex === -1 || headerRowIndex > 25) {
+                  headerRowIndex = 0;
+                }
+
+                // Convert filtered JSON back to CSV
+                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                return csv;
+            } catch (e) {
+                console.error(e);
+                return "";
+            }
+        }
+        return gk_fileData[filename] || "";
+        }
+        </script><!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Prototipo Juego 3D - Ciudad Vice City Optimizada</title>
+    <style>
+        body { margin: 0; overflow: hidden; }
+        canvas { display: block; }
+        #info { position: absolute; top: 10px; left: 10px; color: white; font-family: Arial; background: rgba(0, 0, 0, 0.7); padding: 10px; }
+        #interaction { position: absolute; top: 50px; left: 10px; color: white; font-family: Arial; background: rgba(0, 0, 0, 0.7); padding: 10px; display: none; }
+    </style>
+</head>
+<body>
+    <div id="info">Usa WASD para moverte/deslizarte, Espacio para saltar. Acércate a NPCs o tiendas para interactuar! Dinero: <span id="money">100</span></div>
+    <div id="interaction"></div>
+    <script defer src="https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.min.js" onerror="alert('Error: No se pudo cargar Three.js. Verifica tu conexión.');"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/three@0.165.0/examples/js/controls/OrbitControls.js" onerror="alert('Error: No se pudo cargar OrbitControls. Verifica tu conexión.');"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/three@0.165.0/examples/js/loaders/GLTFLoader.js" onerror="alert('Error: No se pudo cargar GLTFLoader. Verifica tu conexión.');"></script>
+    <script>
+        // Verificar que THREE esté definido
+        function startApp() {
+            if (typeof THREE === 'undefined') {
+                console.error('THREE no está definido. Asegúrate de que Three.js se cargó correctamente.');
+                alert('Error: No se pudo inicializar el juego porque Three.js no se cargó. Verifica tu conexión.');
+                throw new Error('THREE no está definido');
+            }
+
+            // Escena, cámara y renderizador
+            const scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x1a1a1a); // Fondo oscuro para evitar blanco
+            const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 2000);
+            camera.position.set(0, 5, 10); // Posición inicial para ver la escena
+            const renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.body.appendChild(renderer.domElement);
+
+            // Iluminación optimizada
+            const ambientLight = new THREE.AmbientLight(0x606060, 1.2); // Luz ambiental más fuerte
+            scene.add(ambientLight);
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.6);
+            directionalLight.position.set(250, 500, 250);
+            scene.add(directionalLight);
+
+            // Terreno (500x500)
+            const groundGeometry = new THREE.PlaneGeometry(500, 500);
+            const groundMaterial = new THREE.MeshStandardMaterial({ color: 0xf4a460 });
+            const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+            ground.rotation.x = -Math.PI / 2;
+            scene.add(ground);
+
+            // Calles (espaciado 50 para optimización)
+            const lineMaterial = new THREE.LineBasicMaterial({ color: 0xffffff });
+            for (let i = -250; i <= 250; i += 50) {
+                const horizontal = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-250, 0.01, i), new THREE.Vector3(250, 0.01, i)]);
+                scene.add(new THREE.Line(horizontal, lineMaterial));
+                const vertical = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(i, 0.01, -250), new THREE.Vector3(i, 0.01, 250)]);
+                scene.add(new THREE.Line(vertical, lineMaterial));
+            }
+
+            // Edificios (50)
+            const buildingColors = [0xff69b4, 0x00ffff, 0x9370db];
+            const buildings = [];
+            const shops = [];
+            for (let i = 0; i < 50; i++) {
+                const width = Math.random() * 10 + 5;
+                const height = Math.random() * 40 + 10;
+                const depth = Math.random() * 10 + 5;
+                const buildingGeometry = new THREE.BoxGeometry(width, height, depth);
+                const buildingMaterial = new THREE.MeshStandardMaterial({ color: buildingColors[Math.floor(Math.random() * buildingColors.length)] });
+                const building = new THREE.Mesh(buildingGeometry, buildingMaterial);
+                building.position.set(Math.random() * 400 - 200, height / 2, Math.random() * 400 - 200);
+                scene.add(building);
+                buildings.push(building);
+
+                if (i < 5) {
+                    building.isShop = true;
+                    shops.push(building);
+                }
+            }
+
+            // Palmeras (30)
+            const palmTrunkMaterial = new THREE.MeshStandardMaterial({ color: 0x8b4513 });
+            const palmLeafMaterial = new THREE.MeshStandardMaterial({ color: 0x228b22 });
+            for (let i = 0; i < 30; i++) {
+                const palmGroup = new THREE.Group();
+                const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 10, 8), palmTrunkMaterial);
+                trunk.position.y = 5;
+                palmGroup.add(trunk);
+
+                for (let j = 0; j < 5; j++) {
+                    const leaf = new THREE.Mesh(new THREE.SphereGeometry(2, 8, 8), palmLeafMaterial);
+                    leaf.position.set(Math.sin(j * 1.256) * 2, 10 + Math.random(), Math.cos(j * 1.256) * 2);
+                    palmGroup.add(leaf);
+                }
+
+                palmGroup.position.set(Math.random() * 400 - 200, 0, Math.random() * 400 - 200);
+                scene.add(palmGroup);
+            }
+
+            // Personaje jugador
+            const characterGroup = new THREE.Group();
+            scene.add(characterGroup);
+            characterGroup.position.set(0, 0, 0);
+            let playerMoney = 100;
+            document.getElementById('money').textContent = playerMoney;
+
+            const loader = new THREE.GLTFLoader();
+            let npcTemplate = null;
+
+            loader.load('https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Models/master/2.0/CesiumMan/glTF-Binary/CesiumMan.glb', function (gltf) {
+                const playerModel = gltf.scene.clone();
+                playerModel.scale.set(1.5, 1.5, 1.5);
+                playerModel.position.y = 0;
+                characterGroup.add(playerModel);
+
+                mixer = new THREE.AnimationMixer(playerModel);
+                const animations = gltf.animations;
+                actions = {};
+
+                animations.forEach((clip) => {
+                    const name = clip.name.toLowerCase();
+                    actions[name] = mixer.clipAction(clip);
+                });
+
+                if (actions['cesiumman']) {
+                    actions['cesiumman'].play();
+                } else {
+                    console.warn('No se encontró animación "cesiumman". Usando fallback.');
+                }
+
+                npcTemplate = gltf.scene;
+                console.log('Modelo jugador cargado:', actions);
+            }, undefined, function (error) {
+                console.error('Error al cargar modelo del jugador:', error);
+                // Fallback: modelo simple si GLTF falla
+                const fallbackGeometry = new THREE.BoxGeometry(1, 2, 1);
+                const fallbackMaterial = new THREE.MeshStandardMaterial({ color: 0xff0000 });
+                const fallbackPlayer = new THREE.Mesh(fallbackGeometry, fallbackMaterial);
+                fallbackPlayer.position.y = 1;
+                characterGroup.add(fallbackPlayer);
+                alert('No se pudo cargar el modelo del jugador. Usando modelo de respaldo rojo.');
+            });
+
+            // NPCs (500, clonados)
+            const npcs = [];
+            const npcMixers = [];
+            const maxNpcs = 500;
+
+            loader.load('https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Models/master/2.0/CesiumMan/glTF-Binary/CesiumMan.glb', function (gltf) {
+                for (let i = 0; i < maxNpcs; i++) {
+                    const npcGroup = new THREE.Group();
+                    npcGroup.position.set(Math.random() * 400 - 200, 0, Math.random() * 400 - 200);
+                    scene.add(npcGroup);
+                    npcs.push(npcGroup);
+
+                    const npcModel = gltf.scene.clone();
+                    npcModel.scale.set(1.2 + Math.random() * 0.6, 1.2 + Math.random() * 0.6, 1.2 + Math.random() * 0.6);
+                    npcModel.position.y = 0;
+                    npcGroup.add(npcModel);
+
+                    const npcMixer = new THREE.AnimationMixer(npcModel);
+                    npcGroup.mixer = npcMixer;
+                    const npcActions = {};
+                    gltf.animations.forEach((clip) => {
+                        npcActions[clip.name.toLowerCase()] = npcMixer.clipAction(clip);
+                    });
+
+                    if (npcActions['cesiumman']) {
+                        npcActions['cesiumman'].play();
+                    }
+
+                    npcMixers.push(npcMixer);
+                    npcGroup.velocity = new THREE.Vector3(Math.random() * 0.05 - 0.025, 0, Math.random() * 0.05 - 0.025);
+                }
+                console.log(`${maxNpcs} NPCs cargados.`);
+            }, undefined, function (error) {
+                console.error('Error al cargar NPCs:', error);
+                // Fallback: NPCs simples si GLTF falla
+                for (let i = 0; i < maxNpcs; i++) {
+                    const npcGroup = new THREE.Group();
+                    npcGroup.position.set(Math.random() * 400 - 200, 0, Math.random() * 400 - 200);
+                    scene.add(npcGroup);
+                    npcs.push(npcGroup);
+
+                    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 2, 8), new THREE.MeshStandardMaterial({ color: 0x00ff00 }));
+                    body.position.y = 1;
+                    npcGroup.add(body);
+
+                    const head = new THREE.Mesh(new THREE.SphereGeometry(0.4, 8, 8), new THREE.MeshStandardMaterial({ color: 0x00ff00 }));
+                    head.position.y = 2.2;
+                    npcGroup.add(head);
+
+                    npcGroup.velocity = new THREE.Vector3(Math.random() * 0.05 - 0.025, 0, Math.random() * 0.05 - 0.025);
+                }
+                alert('No se pudieron cargar NPCs. Usando modelos de respaldo verdes.');
+            });
+
+            // Física del personaje
+            let velocity = new THREE.Vector3(0, 0, 0);
+            const gravity = -0.05;
+            const moveSpeed = 0.15;
+            const friction = 0.95;
+            let isJumping = false;
+            let isMoving = false;
+
+            // Animador
+            let mixer = null;
+            const clock = new THREE.Clock();
+            let actions = {};
+
+            // Controles
+            const keys = {};
+            window.addEventListener('keydown', (e) => { keys[e.code] = true; });
+            window.addEventListener('keyup', (e) => { keys[e.code] = false; });
+
+            // Cámara en tercera persona
+            function updateCamera() {
+                const offset = new THREE.Vector3(0, 3, 8);
+                const characterPos = characterGroup.position.clone();
+                camera.position.copy(characterPos).add(offset);
+                camera.lookAt(characterPos.add(new THREE.Vector3(0, 1.5, 0)));
+            }
+
+            // Colisiones
+            function checkCollisions(newPosition) {
+                const bounds = 249;
+                newPosition.x = Math.max(-bounds, Math.min(bounds, newPosition.x));
+                newPosition.z = Math.max(-bounds, Math.min(bounds, newPosition.z));
+                newPosition.y = Math.max(0, newPosition.y);
+
+                buildings.forEach(building => {
+                    const box = new THREE.Box3().setFromObject(building);
+                    const charBox = new THREE.Box3(new THREE.Vector3(newPosition.x - 0.5, newPosition.y, newPosition.z - 0.5),
+                                                   new THREE.Vector3(newPosition.x + 0.5, newPosition.y + 2, newPosition.z + 0.5));
+                    if (box.intersectsBox(charBox)) {
+                        newPosition.copy(characterGroup.position);
+                    }
+                });
+
+                return newPosition;
+            }
+
+            // Movimiento NPCs
+            function updateNPCs() {
+                const delta = clock.getDelta();
+                npcs.forEach(npc => {
+                    if (Math.random() < 0.01) {
+                        npc.velocity = new THREE.Vector3(Math.random() * 0.05 - 0.025, 0, Math.random() * 0.05 - 0.025);
+                    }
+                    npc.position.add(npc.velocity);
+
+                    npc.position.x = Math.max(-249, Math.min(249, npc.position.x));
+                    npc.position.z = Math.max(-249, Math.min(249, npc.position.z));
+
+                    if (npc.velocity.length() > 0) {
+                        npc.lookAt(npc.position.clone().add(npc.velocity));
+                    }
+
+                    if (npc.mixer) {
+                        npc.mixer.update(delta);
+                    }
+                });
+            }
+
+            // Interacciones
+            function checkInteractions() {
+                const interactionDiv = document.getElementById('interaction');
+                interactionDiv.style.display = 'none';
+
+                const playerPos = characterGroup.position;
+
+                for (let npc of npcs) {
+                    if (playerPos.distanceTo(npc.position) < 3) {
+                        interactionDiv.textContent = '¡Hola, peatón estilo GTA V! ¿Quieres charlar o comprar? (Presiona E)';
+                        interactionDiv.style.display = 'block';
+                        if (keys['KeyE']) {
+                            alert('NPC: "¡Ey, qué tal en esta ciudad loca!" Compraste un snack por 5 monedas.');
+                            playerMoney -= 5;
+                            if (playerMoney < 0) playerMoney = 0;
+                            document.getElementById('money').textContent = playerMoney;
+                        }
+                        return;
+                    }
+                }
+
+                for (let shop of shops) {
+                    if (playerPos.distanceTo(shop.position) < 5) {
+                        interactionDiv.textContent = 'Bienvenido a la tienda! Compra o vende itens. (Presiona E)';
+                        interactionDiv.style.display = 'block';
+                        if (keys['KeyE']) {
+                            alert('Tienda: Transacción completada. Ganaste 20 monedas.');
+                            playerMoney += 20;
+                            document.getElementById('money').textContent = playerMoney;
+                        }
+                        return;
+                    }
+                }
+            }
+
+            // Movimiento jugador
+            function updateMovement() {
+                const moveDirection = new THREE.Vector3();
+                if (keys['KeyW']) moveDirection.z -= moveSpeed;
+                if (keys['KeyS']) moveDirection.z += moveSpeed;
+                if (keys['KeyA']) moveDirection.x -= moveSpeed;
+                if (keys['KeyD']) moveDirection.x += moveSpeed;
+                if (keys['Space'] && !isJumping) {
+                    velocity.y = 0.5;
+                    isJumping = true;
+                }
+
+                isMoving = moveDirection.length() > 0;
+
+                velocity.y += gravity;
+                velocity.x *= friction;
+                velocity.z *= friction;
+                let newPosition = characterGroup.position.clone().add(moveDirection).add(velocity);
+                newPosition = checkCollisions(newPosition);
+
+                characterGroup.position.copy(newPosition);
+                if (characterGroup.position.y <= 0) {
+                    characterGroup.position.y = 0;
+                    velocity.y = 0;
+                    isJumping = false;
+                }
+
+                if (isMoving) {
+                    characterGroup.lookAt(characterGroup.position.clone().add(moveDirection));
+                }
+
+                if (mixer) {
+                    mixer.update(clock.getDelta());
+                }
+            }
+
+            // Redimensionar ventana
+            window.addEventListener('resize', () => {
+                camera.aspect = window.innerWidth / window.innerHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(window.innerWidth, window.innerHeight);
+            });
+
+            // Animación
+            function animate() {
+                requestAnimationFrame(animate);
+                updateMovement();
+                updateNPCs();
+                checkInteractions();
+                updateCamera();
+                renderer.render(scene, camera);
+            }
+            animate();
+        }
+
+        // Ejecutar cuando los scripts estén cargados
+        window.addEventListener('load', () => {
+            setTimeout(startApp, 100);
+        });
+    </script>
+</body>
 </html>
